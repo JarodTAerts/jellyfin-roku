@@ -2,6 +2,7 @@ import "pkg:/source/api/Image.brs"
 import "pkg:/source/api/baserequest.brs"
 import "pkg:/source/utils/config.brs"
 import "pkg:/source/utils/misc.brs"
+import "pkg:/source/api/sdk.bs"
 
 sub init()
     m.top.optionsAvailable = false
@@ -15,6 +16,8 @@ sub init()
     m.unplayedEpisodeCount = m.top.findNode("unplayedEpisodeCount")
 
     m.rows.observeField("doneLoading", "updateSeason")
+
+    m.di = CreateObject("roDeviceInfo")
 end sub
 
 sub setSeasonLoading()
@@ -50,7 +53,7 @@ function onKeyEvent(key as string, press as boolean) as boolean
         return true
     end if
 
-    if key = "OK" or key = "play"
+    if (key = "OK" and press = false) or key = "play"
 
         if m.Shuffle.hasFocus()
             episodeList = m.rows.getChild(0).objects.items
@@ -73,8 +76,47 @@ function onKeyEvent(key as string, press as boolean) as boolean
 
     ' OK needs to be handled on release...
     proceed = false
-    if key = "OK"
-        proceed = true
+    if key = "OK" and press = false
+        if m.di.TimeSinceLastKeypress() > 2
+            ' If OK was pressed for more than the threshold time then handle this as a long pressed operation
+            itemToPlay = focusedChild.content.getChild(focusedChild.rowItemFocused[0]).getChild(0)
+
+            ' Modify text to show in options menu based on if episde is currently marked as watched or not
+            ' Only show opposite option to what item is currently marked as
+            watchedOptionText = "Mark "
+            if itemToPlay.content.watched
+                watchedOptionText += "Watched"
+            else
+                watchedOptionText += " Unwatched"
+            end if
+
+            selectedOption = option_dialog([watchedOptionText, "Cancel"], "Additional Options")
+
+            if LCase(selectedOption) <> LCase("cancel")
+                if isValid(itemToPlay) and isValid(itemToPlay.id) and itemToPlay.id <> ""
+                    ' Marked as watched or unwatched based on what property was showing in the options dialog
+                    isWatched = itemToPlay.content.watched
+                    if LCase(selectedOption) = LCase("Mark Watched")
+                        api.users.MarkPlayed(m.global.session.user.id, itemToPlay.id)
+                        isWatched = true
+                    end if
+
+                    if LCase(selectedOption) = LCase("Mark Unwatched")
+                        api.users.UnmarkPlayed(m.global.session.user.id, itemToPlay.id)
+                        isWatched = false
+                    end if
+
+                    ' Refresh view to show that episode was marked as watched
+                    itemToPlay.content.watched = isWatched
+                    group = m.scene.focusedChild
+                    group.timeLastRefresh = CreateObject("roDateTime").AsSeconds()
+                    group.callFunc("refresh")
+                end if
+            end if
+        else
+            ' If the ok button was released before
+            proceed = true
+        end if
     end if
 
     if press and key = "play" or proceed = true
@@ -86,5 +128,11 @@ function onKeyEvent(key as string, press as boolean) as boolean
         end if
         handled = true
     end if
+
+    if key = "OK" and press
+        m.okPressedDateTime = CreateObject("roDateTime")
+        return true
+    end if
+
     return handled
 end function
